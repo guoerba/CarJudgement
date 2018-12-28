@@ -12,31 +12,33 @@
 #pragma comment(lib,".\\mysql\\lib\\mysqlrouter_lib.lib")
 #pragma comment(lib,".\\mysql\\lib\\mysqlservices.lib")
 */
-/*
+
 #define HOST "10.3.9.52"
 #define USER "root"
 #define PASSWORD "root"
 #define PORT 3306
 #define MYDB "db_ga_viid"
-*/
+/*
 #define HOST "localhost"
 #define USER "root"
 #define PASSWORD "guo"
 #define PORT 3306
-#define MYDB "db_ga_viid"
+#define MYDB "db_ga_viid"*/
 
 const char *json1 = "{\"TaskCode\":\"0\",\"LicensePlate\":\"川X21191\",\"Host\":\"localhost\",\"User\":\"root\",\"Password\":\"guo\",\"Port\":\"3306\",\"Database\":\"db_ga_viid\"}";
 const char *json2 = "{\"TaskCode\":\"0\",\"VehicleColor\":\"蓝色\",\"VehicleBrand\":\"奥迪\",\"StartAnalysisTime\":\"2018-10-29 5:10:40\",\"EndAnalysisTime\":\"2018-10-30 15:10:15\",\"Host\":\"localhost\",\"User\":\"root\",\"Password\":\"guo\",\"Port\":\"3306\",\"Database\":\"db_ga_viid\"}";
+const char *json3 = "{\"TaskCode\":\"3\",\"Tollgate\":{\"list\":[ \"51010700001320102953\",\"51010700001320102956\",\"51010700001320102957\" ],\"listNumber\":\"3\"},\"StartAnalysisTime\":\"2018-10-28 15:10:15\",\"EndAnalysisTime\":\"2018-10-30 15:10:16\",\"Host\":\"localhost\",\"User\":\"root\",\"Password\":\"guo\",\"Port\":\"3306\",\"Database\":\"db_ga_viid\"}";
 
-int func()
+int func()//测试用函数
 {
 	
 	std::cout << _MSC_VER << std::endl;
-	JsonParser(std::string(json1));
+	//JsonParser(std::string(json1));
 	//JsonParser(std::string(json2));
-	//CarJudgedAlgorithm cj(HOST,USER,PASSWORD,PORT,MYDB);
-
-
+	//JsonParser(boost::locale::conv::between(std::string(json3),"UTF-8","GBK"));
+	/*CarJudgedAlgorithm cj(HOST,USER,PASSWORD,PORT,MYDB,1);
+	cj.CorrelationAnalysis("川AG331E", "2018-10-28 16:09:25", "2018-10-29  16:24:27");
+	std::cout << "results: " << boost::locale::conv::between(cj.GetResults(), "GBK", "UTF-8") << std::endl;*/
 	return 0;
 }
 
@@ -46,8 +48,6 @@ int func()
 	 {
 		std::cout << "in callback!"  << std::endl;
 		JsonParser(std::string(sData,nLen));
-		// JsonParser(std::string(json2));
-		std::cout << std::endl;
 	 }
 			
 	 

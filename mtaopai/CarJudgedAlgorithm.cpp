@@ -11,15 +11,28 @@ CarJudgedAlgorithm::CarJudgedAlgorithm()
 }
 
 
-CarJudgedAlgorithm::CarJudgedAlgorithm(const char * host, const char * user, const char * password, unsigned int port, const char * database)
+CarJudgedAlgorithm::CarJudgedAlgorithm(const char * host
+									 , const char * user
+									 , const char * password
+									 , unsigned int port
+									 , const char * database
+									 , int taskcode)
+	: TaskCode(taskcode)
+	, json(std::string())
 {
-	json = std::string();
 	ConnectDatabase(host, user, password, port, database);
 	//FakePlateVehicles("川X21191");
 	//FakePlateVehicles("蓝色", "奥迪", "2018-10-29 5:10:40", "2018-10-30 15:10:15");
 }
 
-CarJudgedAlgorithm::CarJudgedAlgorithm(std::string host, std::string user, std::string password, unsigned int port, std::string database)
+CarJudgedAlgorithm::CarJudgedAlgorithm(std::string host
+									 , std::string user
+									 , std::string password
+									 , unsigned int port
+									 , std::string database
+									 , int taskcode)
+	: TaskCode(taskcode)
+	, json(std::string())
 	/*: host(host)
 	, user(user)
 	, password(password)
@@ -27,7 +40,6 @@ CarJudgedAlgorithm::CarJudgedAlgorithm(std::string host, std::string user, std::
 	, database(database)*/
 	
 {
-	json = std::string();
 	ConnectDatabase(host.c_str(), user.c_str(), password.c_str(), port, database.c_str());
 	std::string().swap(host);
 	std::string().swap(user);
@@ -40,9 +52,11 @@ CarJudgedAlgorithm::CarJudgedAlgorithm(const char * host
 									 , const char * password
 									 , unsigned int port
 									 , const char * database
-									 , const char * plateNo)
+									 , const char * plateNo
+									 , int taskcode)
+	: TaskCode(taskcode)
+	, json(std::string())
 {
-	json = std::string();
 	ConnectDatabase(host, user, password, port, database);
 	FakePlateVehicles(plateNo);
 }
@@ -55,9 +69,11 @@ CarJudgedAlgorithm::CarJudgedAlgorithm(const char * host
 									 , const char * vColor
 									 , const char * vBrand
 									 , const char * st
-									 , const char * et)
+									 , const char * et
+									 , int taskcode)
+	: TaskCode(taskcode)
+	, json(std::string())
 {
-	json = std::string();
 	ConnectDatabase(host, user, password, port, database);
 	FakePlateVehicles(vColor,vBrand,st,et);
 }
@@ -202,6 +218,437 @@ std::string CarJudgedAlgorithm::GetResults()
 	return json;
 }
 
+int CarJudgedAlgorithm::CorrelationAnalysis(const char * plateno, const char * st, const char * et)
+{
+	std::cout << "in correlationanalysis!" << std::endl;
+	std::string query = (boost::format("SELECT b.PlateNo AS plateno,"
+		"COUNT(b.PlateNo) AS count "
+		"FROM (SELECT AppearTime,"
+			"PlateNo,"
+			"DeviceID "
+			"FROM MotorVehicle "
+			"WHERE PlateNo=\"%s\" AND AppearTime BETWEEN \"%s\" AND \"%s\") a "
+		"LEFT JOIN (SELECT AppearTime,"
+			"PlateNo,"
+			"DeviceID "
+			"FROM MotorVehicle "
+			"WHERE PlateNo<>\"%s\") b "
+		"ON a.DeviceID = b.DeviceID "
+		"WHERE "
+		"CASE "
+			"WHEN a.AppearTime < b.AppearTime "
+				"THEN TIMESTAMPDIFF(SECOND, a.AppearTime, b.AppearTime) < 60 "
+			"WHEN a.AppearTime > b.AppearTime "
+				"THEN TIMESTAMPDIFF(SECOND, b.AppearTime, a.AppearTime) < 60 "
+		"END "
+		"GROUP BY plateno "
+		"ORDER BY count DESC") % plateno % st % et % plateno).str();
+	query = GBKtoU8(query);
+	std::cout << "查询语句1:     " << query.c_str() << std::endl;
+	if (mysql_query(mysql, query.c_str()))
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+	query.clear();
+
+	MYSQL_RES *results = mysql_store_result(mysql);//取出查到的数据表（需要手动释放内存）
+	if (!results)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	unsigned int field_num = mysql_num_fields(results);//查到的数据表中的列数
+	MYSQL_FIELD *fields = mysql_fetch_fields(results);//返回查到的数据表中的所有列信息，并保存为结构体形式
+	if (!fields)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	std::map<std::string, unsigned int> fieldsnameMap;
+	for (unsigned int i = 0; i < field_num; i++)
+		fieldsnameMap[std::string(fields[i].name)] = i;
+
+	MYSQL_ROW row;
+	int max = atoi(mysql_fetch_row(results)[fieldsnameMap["count"]]);
+	mysql_data_seek(results, 0);
+	std::vector<std::string> targetplates;
+	while (row = mysql_fetch_row(results))//查到的数据表中的所有数据，并一行一行的顺序读取
+	{
+		if (atoi(row[fieldsnameMap["count"]]) < max - CorrelationThresold)
+			break;
+		targetplates.push_back(U8toGBK(row[fieldsnameMap["plateno"]]));
+	}
+		
+	EncapsulateCorrelationAnalysistoJson(targetplates);
+	mysql_free_result(results);
+	return 0;
+}
+
+int CarJudgedAlgorithm::TrajectoryCollision(std::vector<std::string> tollgates, const char * st, const char * et)
+{
+	std::string t;
+	for (int i = 0, isize = tollgates.size(); i < isize; i++)
+	{
+		t.append("\'");
+		t.append(tollgates[i]);
+		t.append("\',");
+	}
+	t.resize(t.size() - 1);
+
+	std::cout << "in TrajectoryCollision!" << std::endl;
+	std::string query = (boost::format("SELECT PlateNo,COUNT(PlateNo) AS count "
+		"FROM MotorVehicle WHERE DeviceID IN(%s) AND AppearTime BETWEEN \'%s\' AND \'%s\' "
+		"GROUP BY PlateNo ORDER BY count DESC ") % t % st % et).str();
+	query = GBKtoU8(query);
+	std::cout << "查询语句1:     " << query.c_str() << std::endl;
+	if (mysql_query(mysql, query.c_str()))
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+	query.clear();
+
+	MYSQL_RES *results = mysql_store_result(mysql);//取出查到的数据表（需要手动释放内存）
+	if (!results)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	unsigned int field_num = mysql_num_fields(results);//查到的数据表中的列数
+	MYSQL_FIELD *fields = mysql_fetch_fields(results);//返回查到的数据表中的所有列信息，并保存为结构体形式
+	if (!fields)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	std::map<std::string, unsigned int> fieldsnameMap;
+	for (unsigned int i = 0; i < field_num; i++)
+		fieldsnameMap[std::string(fields[i].name)] = i;
+
+	MYSQL_ROW row;
+	int max = atoi(mysql_fetch_row(results)[fieldsnameMap["count"]]);
+	mysql_data_seek(results, 0);
+	std::vector<std::string> targetplates;
+	while (row = mysql_fetch_row(results))//查到的数据表中的所有数据，并一行一行的顺序读取
+	{
+		if (atoi(row[fieldsnameMap["count"]]) < max - TrajectoryThresold)
+			break;
+		targetplates.push_back(U8toGBK(row[fieldsnameMap["PlateNo"]]));
+	}
+
+	EncapsulateTrajectoryCollisiontoJson(targetplates);
+	mysql_free_result(results);
+	return 0;
+}
+
+int CarJudgedAlgorithm::FirstTimeEnterTown(std::vector<std::string> tollgates, const char * st, const char * et)
+{
+	std::string t;
+	for (int i = 0, isize = tollgates.size(); i < isize; i++)
+	{
+		t.append("\'");
+		t.append(tollgates[i]);
+		t.append("\',");
+	}
+	t.resize(t.size() - 1);
+
+	std::cout << "in FirstTimeEnterTown!" << std::endl;
+	std::string query = (boost::format("SELECT PlateNo,COUNT(PlateNo) AS count "
+		"FROM MotorVehicle WHERE DeviceID IN(%s) AND AppearTime BETWEEN \'%s\' AND \'%s\' "
+		"GROUP BY PlateNo HAVING count=1") % t % st % et).str();
+	query = GBKtoU8(query);
+	std::cout << "查询语句1:     " << query.c_str() << std::endl;
+	if (mysql_query(mysql, query.c_str()))
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+	query.clear();
+
+	MYSQL_RES *results = mysql_store_result(mysql);//取出查到的数据表（需要手动释放内存）
+	if (!results)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	unsigned int field_num = mysql_num_fields(results);//查到的数据表中的列数
+	MYSQL_FIELD *fields = mysql_fetch_fields(results);//返回查到的数据表中的所有列信息，并保存为结构体形式
+	if (!fields)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	std::map<std::string, unsigned int> fieldsnameMap;
+	for (unsigned int i = 0; i < field_num; i++)
+		fieldsnameMap[std::string(fields[i].name)] = i;
+
+	MYSQL_ROW row;
+	std::vector<std::string> targetplates;
+	while (row = mysql_fetch_row(results))//查到的数据表中的所有数据，并一行一行的顺序读取
+		targetplates.push_back(U8toGBK(row[fieldsnameMap["PlateNo"]]));
+
+	EncapsulateFirstTimeEnterTowntoJson(targetplates);
+	mysql_free_result(results);
+	return 0;
+}
+
+int CarJudgedAlgorithm::ActInNight(
+	std::vector<std::string> tollgates
+	, const char * st
+	, const char * et
+	, const char *sdt
+	, const char *edt
+	, const char *snt
+	, const char *ent)
+{
+	std::string t;
+	for (int i = 0, isize = tollgates.size(); i < isize; i++)
+	{
+		t.append("\'");
+		t.append(tollgates[i]);
+		t.append("\',");
+	}
+	std::string query;
+	t.resize(t.size() - 1);
+	if (NightRange(snt, ent))//判断夜晚是否持续到凌晨
+	{
+		std::string date1 = split(st, " ")[0];
+		std::string date2 = split(et, " ")[0];
+		std::string st_daytime = date1;
+		st_daytime.append(" ");
+		st_daytime.append(sdt);
+		std::string et_daytime = date1;
+		et_daytime.append(" ");
+		et_daytime.append(edt);
+		std::string st_nighttime = date1;
+		st_nighttime.append(" ");
+		st_nighttime.append(snt);
+		std::string et_nighttime = date1;
+		et_nighttime.append(" 23:59:59");
+		std::string st_nighttime_1 = date2;
+		st_nighttime_1.append(" 00:00:00");
+		std::string et_nighttime_1 = date2;
+		et_nighttime_1.append(" ");
+		et_nighttime_1.append(ent);
+		/*const char *st_daytime = "2018-10-28 06:00:01";
+		const char *et_daytime = "2018-10-28 20:59:59";
+		const char *st_nighttime = "2018-10-28 21:00:00";
+		const char *et_nighttime = "2018-10-28 23:59:59";
+		const char *st_nighttime_1 = "2018-10-28 00:00:00";
+		const char *et_nighttime_1 = "2018-10-28 06:00:01";*/
+
+		std::cout << "in ActinNight!" << std::endl;
+		query = (boost::format("SELECT IFNULL(night.PlateNo,daytime.PlateNo) AS PlateNo,"
+			"IFNULL(daytime.count,0) AS daytime,IFNULL(night.count,0) AS nighttime,"
+			"IFNULL(night.count / daytime.count, 100) AS property FROM "
+			"(SELECT PlateNo, COUNT(AppearTime) AS count FROM motorvehicle WHERE DeviceID IN(%s) "
+			"AND AppearTime BETWEEN \'%s\' AND \'%s\' "
+			"AND DATE_FORMAT(AppearTime, \'%%H:%%i:%%S\') BETWEEN DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') AND DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') "
+			"GROUP BY PlateNo ORDER BY count) daytime "
+			"RIGHT JOIN "
+			"(SELECT PlateNo, COUNT(AppearTime) AS count FROM motorvehicle WHERE DeviceID IN(%s) "
+			"AND AppearTime BETWEEN \'%s\' AND \'%s\' "
+			"AND(DATE_FORMAT(AppearTime, \'%%H:%%i:%%S\') BETWEEN DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') AND DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') "
+			"OR DATE_FORMAT(AppearTime, \'%%H:%%i:%%S\') BETWEEN DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') AND DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\')) "
+			"GROUP BY PlateNo) night "
+			"ON night.PlateNo = daytime.PlateNo "
+			"HAVING property > %d") % t % st % et % st_daytime % et_daytime % t % st % et % st_nighttime % et_nighttime % st_nighttime_1 % et_nighttime_1 % 1).str();
+		query = GBKtoU8(query); std::cout << "after ActinNight!" << std::endl;
+		std::cout << "查询语句1:     " << query.c_str() << std::endl;
+	}
+	else
+	{
+		std::string date1 = split(st, " ")[0];
+		std::string date2 = split(et, " ")[0];
+		std::string st_daytime = date1;
+		st_daytime.append(" ");
+		st_daytime.append(sdt);
+		std::string et_daytime = date1;
+		et_daytime.append(" ");
+		et_daytime.append(edt);
+		std::string st_nighttime = date1;
+		st_nighttime.append(" ");
+		st_nighttime.append(snt);
+		std::string et_nighttime = date1;
+		et_nighttime.append(" ");
+		et_nighttime.append(ent);
+
+		std::cout << "in ActinNight!" << std::endl;
+		query = (boost::format("SELECT IFNULL(night.PlateNo,daytime.PlateNo) AS PlateNo,"
+			"IFNULL(daytime.count,0) AS daytime,IFNULL(night.count,0) AS nighttime,"
+			"IFNULL(night.count / daytime.count, 100) AS property FROM "
+			"(SELECT PlateNo, COUNT(AppearTime) AS count FROM motorvehicle WHERE DeviceID IN(%s) "
+			"AND AppearTime BETWEEN \'%s\' AND \'%s\' "
+			"AND DATE_FORMAT(AppearTime, \'%%H:%%i:%%S\') BETWEEN DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') AND DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') "
+			"GROUP BY PlateNo ORDER BY count) daytime "
+			"RIGHT JOIN "
+			"(SELECT PlateNo, COUNT(AppearTime) AS count FROM motorvehicle WHERE DeviceID IN(%s) "
+			"AND AppearTime BETWEEN \'%s\' AND \'%s\' "
+			"AND DATE_FORMAT(AppearTime, \'%%H:%%i:%%S\') BETWEEN DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') AND DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') "
+			"GROUP BY PlateNo) night "
+			"ON night.PlateNo = daytime.PlateNo "
+			"HAVING property > %d") % t % st % et % st_daytime % et_daytime % t % st % et % st_nighttime % et_nighttime % 1).str();
+		query = GBKtoU8(query); std::cout << "after ActinNight!" << std::endl;
+		std::cout << "查询语句1:     " << query.c_str() << std::endl;
+	}
+	
+	if (mysql_query(mysql, query.c_str()))
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+	query.clear();
+
+	MYSQL_RES *results = mysql_store_result(mysql);//取出查到的数据表（需要手动释放内存）
+	if (!results)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	unsigned int field_num = mysql_num_fields(results);//查到的数据表中的列数
+	MYSQL_FIELD *fields = mysql_fetch_fields(results);//返回查到的数据表中的所有列信息，并保存为结构体形式
+	if (!fields)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	std::map<std::string, unsigned int> fieldsnameMap;
+	for (unsigned int i = 0; i < field_num; i++)
+		fieldsnameMap[std::string(fields[i].name)] = i;
+
+	MYSQL_ROW row;
+	std::vector<std::string> targetplates;
+	while (row = mysql_fetch_row(results))//查到的数据表中的所有数据，并一行一行的顺序读取
+		targetplates.push_back(U8toGBK(row[fieldsnameMap["PlateNo"]]));
+
+	/*for (auto i : targetplates)
+	{
+		std::cout << " " << i;
+	}*/
+
+	EncapsulateFirstTimeEnterTowntoJson(targetplates);
+	mysql_free_result(results);
+	return 0;
+}
+
+int CarJudgedAlgorithm::ActInNightF(std::vector<std::string> tollgates, const char * st, const char * et, const char * snt, const char * ent, int thershold)
+{
+	std::string t;
+	for (int i = 0, isize = tollgates.size(); i < isize; i++)
+	{
+		t.append("\'");
+		t.append(tollgates[i]);
+		t.append("\',");
+	}
+	t.resize(t.size() - 1);
+
+	std::string query;
+	if (NightRange(snt, ent))//判断夜晚是否持续到凌晨
+	{
+		std::string date1 = split(st, " ")[0];
+		std::string date2 = split(et, " ")[0];
+		std::string st_nighttime = date1;
+		st_nighttime.append(" ");
+		st_nighttime.append(snt);
+		std::string et_nighttime = date1;
+		et_nighttime.append(" 23:59:59");
+		std::string st_nighttime_1 = date2;
+		st_nighttime_1.append(" 00:00:00");
+		std::string et_nighttime_1 = date2;
+		et_nighttime_1.append(" ");
+		et_nighttime_1.append(ent);
+
+		query = (boost::format(
+			"SELECT PlateNo,COUNT(AppearTime) AS count FROM motorvehicle WHERE DeviceID IN (%s) "
+			"AND AppearTime BETWEEN \'%s\' AND \'%s\' "
+			"AND (DATE_FORMAT(AppearTime, \'%%H:%%i:%%S\') BETWEEN DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') AND DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') "
+			"OR DATE_FORMAT(AppearTime, \'%%H:%%i:%%S\') BETWEEN DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') AND DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\')) "
+			"GROUP BY PlateNo "
+			"HAVING count > %d") % t % st % et % st_nighttime % et_nighttime % st_nighttime_1 % et_nighttime_1 % thershold).str();
+		query = GBKtoU8(query); std::cout << "after ActinNight!" << std::endl;
+		std::cout << "查询语句1:     " << query.c_str() << std::endl;
+	}
+	else
+	{
+		std::string date1 = split(st, " ")[0];
+		std::string date2 = split(et, " ")[0];
+		std::string st_nighttime = date1;
+		st_nighttime.append(" ");
+		st_nighttime.append(snt);
+		std::string et_nighttime = date1;
+		et_nighttime.append(" ");
+		et_nighttime.append(ent);
+
+		std::cout << "in ActinNight!" << std::endl;
+		query = (boost::format(
+			"SELECT PlateNo,COUNT(AppearTime) AS count FROM motorvehicle WHERE DeviceID IN (%s) "
+			"AND AppearTime BETWEEN \'%s\' AND \'%s\' "
+			"AND (DATE_FORMAT(AppearTime, \'%%H:%%i:%%S\') BETWEEN DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\') AND DATE_FORMAT(\'%s\', \'%%H:%%i:%%S\')) "
+			"GROUP BY PlateNo "
+			"HAVING count > %d") % t % st % et % st_nighttime % et_nighttime % thershold).str();
+		query = GBKtoU8(query); std::cout << "after ActinNight!" << std::endl;
+		std::cout << "查询语句1:     " << query.c_str() << std::endl;
+	}
+
+	if (mysql_query(mysql, query.c_str()))
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+	query.clear();
+
+	MYSQL_RES *results = mysql_store_result(mysql);//取出查到的数据表（需要手动释放内存）
+	if (!results)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	unsigned int field_num = mysql_num_fields(results);//查到的数据表中的列数
+	MYSQL_FIELD *fields = mysql_fetch_fields(results);//返回查到的数据表中的所有列信息，并保存为结构体形式
+	if (!fields)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		mysql_close(mysql);
+		return -1;
+	}
+
+	std::map<std::string, unsigned int> fieldsnameMap;
+	for (unsigned int i = 0; i < field_num; i++)
+		fieldsnameMap[std::string(fields[i].name)] = i;
+
+	MYSQL_ROW row;
+	std::vector<std::string> targetplates;
+	while (row = mysql_fetch_row(results))//查到的数据表中的所有数据，并一行一行的顺序读取
+		targetplates.push_back(U8toGBK(row[fieldsnameMap["PlateNo"]]));
+
+	EncapsulateFirstTimeEnterTowntoJson(targetplates);
+	mysql_free_result(results);
+	return 0;
+}
 
 int CarJudgedAlgorithm::FakePlateVehicles(const char *plateNo)
 {
@@ -210,8 +657,8 @@ int CarJudgedAlgorithm::FakePlateVehicles(const char *plateNo)
 		",Tollgate.Latitude"
 		",unix_timestamp(MotorVehicle.AppearTime) as time"
 		" from MotorVehicle"
-		" join lane on MotorVehicle.DeviceID = lane.ApeID"
-		" join Tollgate on Tollgate.TollgateID = lane.TollgateID"
+		" join Lane on MotorVehicle.DeviceID = Lane.ApeID"
+		" join Tollgate on Tollgate.TollgateID = Lane.TollgateID"
 		" where MotorVehicle.plateNo=\"%s\""
 		" order by MotorVehicle.AppearTime desc") % (plateNo)).str();
 	query = GBKtoU8(query);
@@ -275,11 +722,11 @@ int CarJudgedAlgorithm::FakePlateVehicles(const char * vColor, const char * vBra
 		",MotorVehicle.PlateNo"
 		",unix_timestamp(MotorVehicle.AppearTime)"
 		" from MotorVehicle"
-		" join lane on MotorVehicle.DeviceID = lane.ApeID"
-		" join Tollgate on Tollgate.TollgateID = lane.TollgateID"
-		" join colortype on MotorVehicle.VehicleColor = colortype.color_value"
-		" join vehiclebrandtype on MotorVehicle.VehicleBrand = vehiclebrandtype.value"
-		" where colortype.color_name=\"%s\" and vehiclebrandtype.name=\"%s\" and"
+		" join Lane on MotorVehicle.DeviceID = Lane.ApeID"
+		" join Tollgate on Tollgate.TollgateID = Lane.TollgateID"
+		" join ColorType on MotorVehicle.VehicleColor = ColorType.color_value"
+		" join VehicleBrandType on MotorVehicle.VehicleBrand = VehicleBrandType.value"
+		" where ColorType.color_name=\"%s\" and VehicleBrandType.name=\"%s\" and"
 		" (MotorVehicle.AppearTime between \'%s\' and \'%s\')"
 		" order by MotorVehicle.AppearTime desc") % vColor % vBrand % st % et).str();//MotorVehicle.AppearTime
 	query = GBKtoU8(query);
@@ -425,8 +872,8 @@ void CarJudgedAlgorithm::FindFakePlateVehicle(MYSQL_RES *results, MYSQL_FIELD fi
 int CarJudgedAlgorithm::EncapsulateFakePlatetoJson(const char * plateNo)
 {
 	std::string query = (boost::format("select"
-		" vehiclebrandtype.name as brand"
-		",colortype.color_name as color"
+		" VehicleBrandType.name as brand"
+		",ColorType.color_name as color"
 		",Tollgate.name as tollgate"
 		",Tollgate.Longitude as longitude"
 		",Tollgate.Latitude as latitude"
@@ -434,10 +881,10 @@ int CarJudgedAlgorithm::EncapsulateFakePlatetoJson(const char * plateNo)
 		",MotorVehicle.SubImageList as image"
 		",MotorVehicle.AppearTime as time"
 		" from MotorVehicle"
-		" join lane on MotorVehicle.DeviceID = lane.ApeID"
-		" join Tollgate on Tollgate.TollgateID = lane.TollgateID"
-		" join colortype on MotorVehicle.VehicleColor = colortype.color_value"
-		" join vehiclebrandtype on MotorVehicle.VehicleBrand = vehiclebrandtype.value"
+		" join Lane on MotorVehicle.DeviceID = Lane.ApeID"
+		" join Tollgate on Tollgate.TollgateID = Lane.TollgateID"
+		" join ColorType on MotorVehicle.VehicleColor = ColorType.color_value"
+		" join VehicleBrandType on MotorVehicle.VehicleBrand = VehicleBrandType.value"
 		" where MotorVehicle.plateNo=\"%s\""
 		" order by MotorVehicle.AppearTime desc") % (plateNo)).str();
 	std::cout << "查询语句2: " << query.c_str() << std::endl;
@@ -480,8 +927,8 @@ int CarJudgedAlgorithm::EncapsulateFakePlatetoJson(std::vector<std::string> fp)
 	plates.resize(plates.size() - 1);
 
 	std::string query = (boost::format("select"
-		" vehiclebrandtype.name as brand"
-		",colortype.color_name as color"
+		" VehicleBrandType.name as brand"
+		",ColorType.color_name as color"
 		",Tollgate.name as tollgate"
 		",Tollgate.Longitude as longitude"
 		",Tollgate.Latitude as latitude"
@@ -489,10 +936,10 @@ int CarJudgedAlgorithm::EncapsulateFakePlatetoJson(std::vector<std::string> fp)
 		",MotorVehicle.SubImageList as image"
 		",MotorVehicle.AppearTime as time"
 		" from MotorVehicle"
-		" join lane on MotorVehicle.DeviceID = lane.ApeID"
-		" join Tollgate on Tollgate.TollgateID = lane.TollgateID"
-		" join colortype on MotorVehicle.VehicleColor = colortype.color_value"
-		" join vehiclebrandtype on MotorVehicle.VehicleBrand = vehiclebrandtype.value"
+		" join Lane on MotorVehicle.DeviceID = Lane.ApeID"
+		" join Tollgate on Tollgate.TollgateID = Lane.TollgateID"
+		" join ColorType on MotorVehicle.VehicleColor = ColorType.color_value"
+		" join VehicleBrandType on MotorVehicle.VehicleBrand = VehicleBrandType.value"
 		" where MotorVehicle.plateNo in (%s)"
 		" order by MotorVehicle.plateNo desc") % (plates)).str();
 	std::cout << "查询语句2: " << query.c_str() << std::endl;
@@ -539,7 +986,7 @@ int CarJudgedAlgorithm::EncapsulateJson(MYSQL_RES * results)
 	MYSQL_ROW row;//弃用原方法，将数据结构构建为一个链表，链表中的元素包括一个车辆的号码，以及该车辆的Coordinate数组或（动态数组）
 	std::string currentPlate = std::string();
 	boost::property_tree::ptree tree, datatree, listtree, tracetree, templisttree;
-	tree.put("TaskCode", 0);
+	tree.put("TaskCode", TaskCode);
 	while (row = mysql_fetch_row(results))//查到的数据表中的所有数据，并一行一行的顺序读取
 	{
 		std::string tempstr = (row[fieldsnameMap["plateNo"]]);
@@ -567,6 +1014,7 @@ int CarJudgedAlgorithm::EncapsulateJson(MYSQL_RES * results)
 		temptracetree.put("TollgateName", (row[fieldsnameMap["tollgate"]]));
 		temptracetree.put("Longitude", (row[fieldsnameMap["longitude"]]));
 		temptracetree.put("Latitude", (row[fieldsnameMap["latitude"]]));
+		temptracetree.put("Image", (row[fieldsnameMap["image"]]));
 		tracetree.push_back(std::make_pair("", temptracetree));
 	}
 	templisttree.put_child("Trace", tracetree);
@@ -580,4 +1028,24 @@ int CarJudgedAlgorithm::EncapsulateJson(MYSQL_RES * results)
 	boost::property_tree::write_json(ssr, tree);
 	json = ssr.str();
 	return 0;
+}
+
+int CarJudgedAlgorithm::EncapsulateCorrelationAnalysistoJson(std::vector<std::string> plates)
+{
+	return EncapsulateFakePlatetoJson(plates);
+}
+
+int CarJudgedAlgorithm::EncapsulateTrajectoryCollisiontoJson(std::vector<std::string> plates)
+{
+	return EncapsulateFakePlatetoJson(plates);
+}
+
+int CarJudgedAlgorithm::EncapsulateFirstTimeEnterTowntoJson(std::vector<std::string> plates)
+{
+	return EncapsulateFakePlatetoJson(plates);
+}
+
+bool CarJudgedAlgorithm::NightRange(const char * snt, const char * ent)
+{
+	return (gethour(snt) - gethour(ent)) >= 0 ? true : false;
 }

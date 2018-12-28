@@ -21,8 +21,12 @@ public:
 	~JsonParser();
 private:
 	void ReadJsonFromStream(std::string s);
-	void ExtractFakePlatesfromJson();
-	void EncapsulateFakePlatestoJson();
+	void ExtractFakePlatesfromJson(int task);
+	void ExtractCorrelationAnalysisfromJson(int task);
+	void ExtractTrajectoryCollisionfromJson(int task);
+	void ExtractFirstTimeEnterTownfromJson(int task);
+	void ExtractActInNightfromJson(int task);
+	void ExtractActInNightFfromJson(int task);
 
 	boost::property_tree::ptree *itree;
 	boost::property_tree::ptree *otree;

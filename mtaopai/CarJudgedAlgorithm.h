@@ -14,6 +14,20 @@
 #include <math.h>
 #include <stdlib.h>
 
+#if 1
+#define table_lane			std::string("Lane")
+#define table_tollgate		std::string("Tollgate")
+#define table_motorvehicle	std::string("MotorVehicle")
+#define table_color			std::string("ColorType")
+#define table_brand			std::string("VehicleBrandType")
+#else
+#define table_lane			std::string("lane")
+#define table_tollgate		std::string("tollgate")
+#define table_motorvehicle	std::string("motorVehicle")
+#define table_color			std::string("colortype")
+#define table_brand			std::string("vehiclebrandtype")
+#endif
+
 #define PI				(acos(-1))//圆周率
 #define EarthRadius		6371004//地球半径
 #define Threshold		25//m/s->90km/h
@@ -23,6 +37,9 @@
 #define PASSWORD "guo"
 #define PORT 3306
 #define MYDB "db_ga_viid"
+
+#define CorrelationThresold		3
+#define TrajectoryThresold		1
 
 #define AngleToArc(x)	(x*PI/180)
 
@@ -50,15 +67,21 @@ class CarJudgedAlgorithm
 public:
 	CarJudgedAlgorithm();
 	CarJudgedAlgorithm(const char *json);
-	CarJudgedAlgorithm(const char *host, const char *user, const char *password, unsigned int port, const char *database);
-	CarJudgedAlgorithm(std::string host, std::string user, std::string password, unsigned int port, std::string database);
-	CarJudgedAlgorithm(const char *host, const char *user, const char *password, unsigned int port, const char *database, const char *plateNo);
-	CarJudgedAlgorithm(const char *host, const char *user, const char *password, unsigned int port, const char *database, const char * vColor, const char * vBrand, const char * st, const char * et);
+	CarJudgedAlgorithm(const char *host, const char *user, const char *password, unsigned int port, const char *database, int taskcode);
+	CarJudgedAlgorithm(std::string host, std::string user, std::string password, unsigned int port, std::string database, int taskcode);
+	CarJudgedAlgorithm(const char *host, const char *user, const char *password, unsigned int port, const char *database, const char *plateNo, int taskcode);
+	CarJudgedAlgorithm(const char *host, const char *user, const char *password, unsigned int port, const char *database, const char * vColor, const char * vBrand, const char * st, const char * et, int taskcode);
 	~CarJudgedAlgorithm();
 	int test();
 	MYSQL *ConnectDatabase(const char *host, const char *user, const char *password, unsigned int port, const char *database);
 	int CloseDatabase(MYSQL *mysql);
-	std::string GetResults();
+	std::string GetResults();//得到最近的结果
+
+	int CorrelationAnalysis(const char *plateno, const char *st, const char *et);//关联分析（伴随车）
+	int TrajectoryCollision(std::vector<std::string> tollgates, const char *st, const char *et);//轨迹碰撞
+	int FirstTimeEnterTown(std::vector<std::string> tollgates, const char *st, const char *et);//首次入城
+	int ActInNight(std::vector<std::string> tollgates, const char *st, const char *et, const char *sdt, const char *edt,const char *snt,const char *ent);//昼伏夜出
+	int ActInNightF(std::vector<std::string> tollgates, const char *st, const char *et, const char *snt, const char *ent,int thershold);//频繁夜出
 
 private:
 	/*std::string host;
@@ -78,7 +101,11 @@ private:
 	int EncapsulateFakePlatetoJson(std::vector < std::string > fp);
 	int EncapsulateJson(MYSQL_RES *results);
 
+	int EncapsulateCorrelationAnalysistoJson(std::vector< std::string > plates);
+	int EncapsulateTrajectoryCollisiontoJson(std::vector< std::string > plates);
+	int EncapsulateFirstTimeEnterTowntoJson(std::vector< std::string > plates);
 	
+	bool NightRange(const char *snt,const char *ent);
 	inline std::string U8toGBK(std::string s) { return boost::locale::conv::between(s, "GBK", "UTF-8"); };
 	inline std::string GBKtoU8(std::string s) { return boost::locale::conv::between(s, "UTF-8", "GBK"); };
 	template<class T>
@@ -126,10 +153,33 @@ private:
 		a = NULL;
 	}
 
+	inline std::vector<std::string> split(std::string str, std::string pattern)
+	{
+		std::string::size_type pos;
+		std::vector<std::string> result;
+		str += pattern;//扩展字符串以方便操作
+		int size = str.size();
 
+		for (int i = 0; i < size; i++)
+		{
+			pos = str.find(pattern, i);
+			if (pos < size)
+			{
+				std::string s = str.substr(i, pos - i);
+				result.push_back(s);
+				i = pos + pattern.size() - 1;
+			}
+		}
+		return result;
+	}
+	inline int gethour(std::string time) {
+		//return atoi(split(split(datetime, " ")[1], "-")[0].c_str());
+		return atoi(split(time, ":")[0].c_str());
+	} 
 
 	MYSQL *mysql;
 	MYSQL_RES *res;
 	std::string json;
+	int TaskCode;
 };
 
