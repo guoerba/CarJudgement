@@ -8,6 +8,8 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/foreach.hpp>
 #include <boost/exception/all.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
+#include <boost/date_time/gregorian/gregorian.hpp>
 #include <string>
 #include <map>
 #include <algorithm>
@@ -69,28 +71,30 @@ public:
 	CarJudgedAlgorithm(const char *json);
 	CarJudgedAlgorithm(const char *host, const char *user, const char *password, unsigned int port, const char *database, int taskcode);
 	CarJudgedAlgorithm(std::string host, std::string user, std::string password, unsigned int port, std::string database, int taskcode);
-	CarJudgedAlgorithm(const char *host, const char *user, const char *password, unsigned int port, const char *database, const char *plateNo, int taskcode);
-	CarJudgedAlgorithm(const char *host, const char *user, const char *password, unsigned int port, const char *database, const char * vColor, const char * vBrand, const char * st, const char * et, int taskcode);
 	~CarJudgedAlgorithm();
 	int test();
 	MYSQL *ConnectDatabase(const char *host, const char *user, const char *password, unsigned int port, const char *database);
 	int CloseDatabase(MYSQL *mysql);
 	std::string GetResults();//得到最近的结果
 
+	int FakePlateVehicles(const char *plateNo);
+	int FakePlateVehicles(const char *vColor, const char *vBrand, const char *st, const char *et);
 	int CorrelationAnalysis(const char *plateno, const char *st, const char *et);//关联分析（伴随车）
 	int TrajectoryCollision(std::vector<std::string> tollgates, const char *st, const char *et);//轨迹碰撞
 	int FirstTimeEnterTown(std::vector<std::string> tollgates, const char *st, const char *et);//首次入城
 	int ActInNight(std::vector<std::string> tollgates, const char *st, const char *et, const char *sdt, const char *edt,const char *snt,const char *ent);//昼伏夜出
 	int ActInNightF(std::vector<std::string> tollgates, const char *st, const char *et, const char *snt, const char *ent,int thershold);//频繁夜出
+	int HiddenVehicle(std::vector<std::string> tollgates, std::vector<std::string> platenos, const char *st, int bt, int ft);//隐匿车辆
+	int FootholdAnalysis(std::vector<std::string> vehicles, const char *st, const char *et, const char *sft, const char *eft, int enduringtime);//落脚点分析
 
+	bool IsReadable() { return ok; }
+	bool IsConnectedtoMysql() { return mysql_ok; }
 private:
 	/*std::string host;
 	std::string user;
 	std::string password;
 	std::string database;
 	int port;*/
-	int FakePlateVehicles(const char *plateNo);
-	int FakePlateVehicles(const char *vColor, const char *vBrand, const char *st, const char *et);
 	bool IsFakePlateVehicle(Coordinate *path, unsigned int size);
 	bool IsFakePlateVehicle(std::vector<Coordinate> &path);
 	std::vector<std::string> IsFakePlateVehicle(std::map< std::string, std::vector<Coordinate> > &paths, std::vector<std::string> &plates);
@@ -104,6 +108,8 @@ private:
 	int EncapsulateCorrelationAnalysistoJson(std::vector< std::string > plates);
 	int EncapsulateTrajectoryCollisiontoJson(std::vector< std::string > plates);
 	int EncapsulateFirstTimeEnterTowntoJson(std::vector< std::string > plates);
+
+	int EncapsulteMysqlError(const char *error, unsigned int errorno, const char * errormsg);
 	
 	bool NightRange(const char *snt,const char *ent);
 	inline std::string U8toGBK(std::string s) { return boost::locale::conv::between(s, "GBK", "UTF-8"); };
@@ -172,6 +178,13 @@ private:
 		}
 		return result;
 	}
+	inline void replace(std::string &str, char from, char to) {
+		for (int i = 0, isize = str.size(); i < isize; i++)
+		{
+			if (str[i] == from)
+				str[i] = to;
+		}
+	}
 	inline int gethour(std::string time) {
 		//return atoi(split(split(datetime, " ")[1], "-")[0].c_str());
 		return atoi(split(time, ":")[0].c_str());
@@ -181,5 +194,7 @@ private:
 	MYSQL_RES *res;
 	std::string json;
 	int TaskCode;
+	bool ok;
+	bool mysql_ok;
 };
 

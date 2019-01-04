@@ -49,9 +49,8 @@ int func()//测试用函数
 		std::cout << "in callback!"  << std::endl;
 		JsonParser(std::string(sData,nLen));
 	 }
-			
-	 
 }
+
 
 int main()
 {	

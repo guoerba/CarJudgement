@@ -27,6 +27,10 @@ private:
 	void ExtractFirstTimeEnterTownfromJson(int task);
 	void ExtractActInNightfromJson(int task);
 	void ExtractActInNightFfromJson(int task);
+	void ExtractHiddenVehiclefromJson(int task);
+	void ExtractFootholdAnalysis(int task);
+
+	void SendJson(const char *json);
 
 	boost::property_tree::ptree *itree;
 	boost::property_tree::ptree *otree;
