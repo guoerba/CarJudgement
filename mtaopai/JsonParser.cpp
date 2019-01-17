@@ -25,10 +25,15 @@ JsonParser::JsonParser(const char * json)
 	try {
 		boost::property_tree::read_json<boost::property_tree::ptree>(ss, *itree);//解析出错可能是因为json格式有误
 	}
-	catch (my_exception &e)
+	catch (boost::exception &e)
 	{
-		std::cout << *boost::get_error_info<err_str>(e) << std::endl;//boost异常
-        std::cout << e.what() << std::endl;//std异常
+		std::cout << boost::diagnostic_information(e).c_str() << std::endl;
+		CarJudgedAlgorithm c;
+		c.EncapsulateError("json格式错误！！！");
+		while (!c.IsReadable());
+		SendJson(c.GetResults().c_str());
+		//std::cout << *boost::get_error_info<err_str>(e) << std::endl;//boost异常
+        //std::cout << e.what() << std::endl;//std异常
 	}
 
 	std::stringstream ssr;
@@ -46,6 +51,7 @@ JsonParser::JsonParser(const char * json)
 	
 		int TaskCode = itree->get<int>("TaskCode");
 		std::cout << "TaskCode: " << TaskCode << std::endl;
+		boost::timer t;	
 		switch (TaskCode)
 		{
 		case 0:ExtractFakePlatesfromJson(TaskCode); break;
@@ -57,6 +63,7 @@ JsonParser::JsonParser(const char * json)
 		case 6:ExtractHiddenVehiclefromJson(TaskCode); break;
 		case 7:ExtractFootholdAnalysis(TaskCode); break;
 		}
+		std::cout << "Task " << TaskCode << "耗时 : " << t.elapsed() << std::endl;
 		
 	}
 }
@@ -141,6 +148,7 @@ void JsonParser::ExtractFakePlatesfromJson(int task)
 			return;
 		}
 		c.FakePlateVehicles(boost::locale::conv::between(itree->get<std::string>("LicensePlate"), "GBK", "UTF-8").c_str());
+		//c.FakePlateVehicles_Thread(boost::locale::conv::between(itree->get<std::string>("LicensePlate"), "GBK", "UTF-8").c_str());
 		std::cout << boost::locale::conv::between(c.GetResults(), "GBK", "UTF-8") << std::endl;
 		while (!c.IsReadable());
 		SendJson(c.GetResults().c_str());

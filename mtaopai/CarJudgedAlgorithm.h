@@ -10,11 +10,13 @@
 #include <boost/exception/all.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/date_time/gregorian/gregorian.hpp>
+#include <boost/timer.hpp>
 #include <string>
 #include <map>
 #include <algorithm>
 #include <math.h>
 #include <stdlib.h>
+#include <thread>
 
 #if 1
 #define table_lane			std::string("Lane")
@@ -78,6 +80,7 @@ public:
 	std::string GetResults();//得到最近的结果
 
 	int FakePlateVehicles(const char *plateNo);
+	int FakePlateVehicles_Thread(const char *plateNo);
 	int FakePlateVehicles(const char *vColor, const char *vBrand, const char *st, const char *et);
 	int CorrelationAnalysis(const char *plateno, const char *st, const char *et);//关联分析（伴随车）
 	int TrajectoryCollision(std::vector<std::string> tollgates, const char *st, const char *et);//轨迹碰撞
@@ -87,9 +90,14 @@ public:
 	int HiddenVehicle(std::vector<std::string> tollgates, std::vector<std::string> platenos, const char *st, int bt, int ft);//隐匿车辆
 	int FootholdAnalysis(std::vector<std::string> vehicles, const char *st, const char *et, const char *sft, const char *eft, int enduringtime);//落脚点分析
 
+	int EncapsulateError(const char *error);
+
 	bool IsReadable() { return ok; }
 	bool IsConnectedtoMysql() { return mysql_ok; }
 private:
+
+	void thread(const char *plateNo, unsigned long step);
+
 	/*std::string host;
 	std::string user;
 	std::string password;

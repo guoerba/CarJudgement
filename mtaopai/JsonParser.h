@@ -1,6 +1,7 @@
 #pragma once
 #include "CarJudgedAlgorithm.h"
 #include "AmqpSample.h"
+#include <boost/timer.hpp>
 struct my_exception :         /* 自定义异常类 */
 	     virtual std::exception,   /* 虚继承，struct默认public继承 */
 	     virtual boost::exception  /* 虚继承，struct默认public继承 */
