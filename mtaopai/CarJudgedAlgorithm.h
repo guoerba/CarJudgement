@@ -11,6 +11,7 @@
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/date_time/gregorian/gregorian.hpp>
 #include <boost/timer.hpp>
+#include <boost/thread.hpp>
 #include <string>
 #include <map>
 #include <algorithm>
@@ -48,6 +49,30 @@
 #define AngleToArc(x)	(x*PI/180)
 
 
+
+struct TraceList {
+	std::string appeartime;
+	std::string tollgate;
+	std::string longitude;
+	std::string latitude;
+	std::string image;
+	TraceList() {};
+	TraceList(const char *time, const char *tollgate, const char *longitude, const char *latitude, const char *image) :
+		appeartime(time), tollgate(tollgate), longitude(longitude), latitude(latitude), image(image) {};
+};
+
+struct DataList {
+	std::string licenseplate;
+	std::string vehiclecolor;
+	std::string vehiclebrand;
+	std::vector<TraceList> trace;
+	DataList() {};
+	DataList(const char *lic, const char *color, const char *brand, TraceList t) :
+		licenseplate(lic), vehiclecolor(color), vehiclebrand(brand) 
+	{
+		trace.push_back(t);
+	};
+};
 
 struct Coordinate {
 	double longitude;				//¾­¶È
@@ -97,6 +122,7 @@ public:
 private:
 
 	void thread(const char *plateNo, unsigned long step);
+	void CommitThread(std::string plateno, unsigned long step,bool *ok);
 
 	/*std::string host;
 	std::string user;
@@ -111,6 +137,7 @@ private:
 	void FindFakePlateVehicle(MYSQL_RES *results, MYSQL_FIELD fields,int rowcount, std::map<std::string, unsigned int> fieldsnameMap,std::string plateno);
 	int EncapsulateFakePlatetoJson(const char *plateNo);
 	int EncapsulateFakePlatetoJson(std::vector < std::string > fp);
+	int EncapsulateFakePlatetoJsonThread(std::vector < std::string > fp);
 	int EncapsulateJson(MYSQL_RES *results);
 
 	int EncapsulateCorrelationAnalysistoJson(std::vector< std::string > plates);

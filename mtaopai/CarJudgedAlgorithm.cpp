@@ -1095,6 +1095,108 @@ void CarJudgedAlgorithm::thread(const char *plateNo,unsigned long step)
 	mysql_close(mysql_thread);
 }
 
+void CarJudgedAlgorithm::CommitThread(std::string plateno, unsigned long step,bool *ok)
+{
+	MYSQL *mysql_thread = mysql_init(NULL);
+	if (!mysql_thread)
+	{
+		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+		EncapsulteMysqlError("Query error!!!", mysql_errno(mysql), mysql_error(mysql));
+	}
+
+	if (!mysql_real_connect(mysql_thread, "localhost", "root", "guo", NULL, 3306, NULL, 0))
+	{
+		std::cerr << mysql_errno(mysql_thread) << ":" << mysql_error(mysql_thread) << std::endl;
+		EncapsulteMysqlError("Query error!!!", mysql_errno(mysql_thread), mysql_error(mysql_thread));
+	}
+
+	if (mysql_select_db(mysql_thread, "db_ga_viid"))//选择数据库(use database)
+	{
+		std::cerr << mysql_errno(mysql_thread) << ":" << mysql_error(mysql_thread) << std::endl;
+		EncapsulteMysqlError("Error merges when select database!!!", mysql_errno(mysql_thread), mysql_error(mysql_thread));
+
+
+	}
+
+	std::string query = (boost::format("SELECT"
+		" VehicleBrandType.name AS brand"
+		",ColorType.color_name AS color"
+		",MotorVehicle.DeviceID AS tollgate"
+		",Tollgate.Longitude AS longitude"
+		",Tollgate.Latitude AS latitude"
+		",MotorVehicle.plateNo"
+		",MotorVehicle.SubImageList AS image"
+		",MotorVehicle.AppearTime AS time"
+		" FROM MotorVehicle"
+		" STRAIGHT_JOIN Lane ON MotorVehicle.DeviceID = Lane.ApeID"
+		" STRAIGHT_JOIN Tollgate ON Tollgate.TollgateID = Lane.TollgateID"
+		" JOIN ColorType ON MotorVehicle.VehicleColor = ColorType.color_value"
+		" JOIN VehicleBrandType ON MotorVehicle.VehicleBrand = VehicleBrandType.value"
+		" WHERE MotorVehicle.MotorVehicleID BETWEEN \"%d\" AND \"%d\" AND MotorVehicle.plateNo IN (%s)"
+		" ORDER BY MotorVehicle.plateNo DESC") % step % (step+STEP) % (plateno)).str();
+	query = GBKtoU8(query);
+	std::cout << "查询语句1:     " << query.c_str() << std::endl;
+	if (mysql_query(mysql_thread, query.c_str()))
+	{
+		std::cerr << mysql_errno(mysql_thread) << ":" << mysql_error(mysql_thread) << std::endl;
+		EncapsulteMysqlError("Query error!!!", mysql_errno(mysql_thread), mysql_error(mysql_thread));
+
+		exit(-1);
+	}
+	query.clear();
+
+	MYSQL_RES *results = mysql_store_result(mysql_thread);//取出查到的数据表（需要手动释放内存）
+	if (!results)
+	{
+		std::cerr << mysql_errno(mysql_thread) << ":" << mysql_error(mysql_thread) << std::endl;
+		EncapsulteMysqlError("Datastructure MYSQL_RES error!!!", mysql_errno(mysql_thread), mysql_error(mysql_thread));
+
+		exit(-1);
+	}
+
+	unsigned int field_num = mysql_num_fields(results);//查到的数据表中的列数
+	my_ulonglong table_rows = mysql_num_rows(results);//查到的数据表中的行数
+	/*if (mysql_fetch_row(results) == NULL)
+	{
+		printf("No data found!");
+		EncapsulateError("No data found!");
+		return -1;
+	}*/
+
+	MYSQL_FIELD *fields = mysql_fetch_fields(results);//返回查到的数据表中的所有列信息，并保存为结构体形式
+	if (!fields)
+	{
+		std::cerr << mysql_errno(mysql_thread) << ":" << mysql_error(mysql_thread) << std::endl;
+		EncapsulteMysqlError("Datastructure MYSQL_FIELD error!!!", mysql_errno(mysql_thread), mysql_error(mysql_thread));
+
+		exit(-1);
+	}
+
+	std::map<std::string, unsigned int> fieldsnameMap;
+	for (unsigned int i = 0; i < field_num; i++)
+		fieldsnameMap[std::string(fields[i].name)] = i;
+
+	MYSQL_ROW row;
+	int rlen = 0;
+	Coordinate *paths = new Coordinate[table_rows];
+	while (row = mysql_fetch_row(results))//查到的数据表中的所有数据，并一行一行的顺序读取
+	{
+		paths[rlen++] = Coordinate(row[fieldsnameMap[std::string("Longitude")]]
+			, row[fieldsnameMap[std::string("Latitude")]]
+			, row[fieldsnameMap[std::string("time")]]);
+		std::cout << (boost::format("Between %d and %d the Longitude:%s Latitude:%s time:%s") % (step) % (step + 100000)
+			% (row[fieldsnameMap[std::string("Longitude")]]) % (row[fieldsnameMap[std::string("Latitude")]])
+			% (row[fieldsnameMap[std::string("time")]])).str() << std::endl;
+	}
+	delete[] paths;
+	mysql_free_result(results);
+	mysql_close(mysql_thread);
+
+	
+	*ok = true;
+	
+}
+
 int CarJudgedAlgorithm::FakePlateVehicles(const char *plateNo)
 {
 	std::string query = (boost::format("SELECT"
@@ -1286,7 +1388,7 @@ int CarJudgedAlgorithm::FakePlateVehicles(const char * vColor, const char * vBra
 		" (MotorVehicle.AppearTime BETWEEN \'%s\' AND \'%s\')"
 		" ORDER BY MotorVehicle.AppearTime DESC") % vColor % vBrand % st % et).str();//MotorVehicle.AppearTime
 	query = GBKtoU8(query);
-	std::cout << "查询语句: " << query.c_str() << std::endl;
+	//std::cout << "查询语句: " << query.c_str() << std::endl;
 	if (mysql_query(mysql, query.c_str()))
 	{
 		std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
@@ -1356,7 +1458,8 @@ int CarJudgedAlgorithm::FakePlateVehicles(const char * vColor, const char * vBra
 
 	mysql_data_seek(results, 0);
 	std::vector < std::string > fp = IsFakePlateVehicle(paths, plates);//所有有嫌疑的套牌
-	EncapsulateFakePlatetoJson(fp);
+	//EncapsulateFakePlatetoJson(fp);
+	EncapsulateFakePlatetoJsonThread(fp);
 	mysql_free_result(results);
 	std::map<std::string, unsigned int>().swap(fieldsnameMap);
 	return 0;
@@ -1540,6 +1643,157 @@ int CarJudgedAlgorithm::EncapsulateFakePlatetoJson(std::vector<std::string> fp)
 	return 0;
 }
 
+int CarJudgedAlgorithm::EncapsulateFakePlatetoJsonThread(std::vector<std::string> fp)
+{
+	if (fp.empty())
+	{
+		std::cout << "no target vehicles found!" << std::endl;
+		EncapsulteMysqlError("Datastructure fakeplates is empty!!!", -1, "");
+		return -1;
+	}
+
+	std::string plates;
+	for (int i = 0, isize = fp.size(); i < isize; i++)
+	{
+		plates.append("\'");
+		plates.append(fp[i]);
+		plates.append("\',");
+	}
+	plates.resize(plates.size() - 1);
+
+	std::map<std::string,DataList> datalist;
+	boost::timer t;
+	for (unsigned long step = 0; step < TOTAL; step += STEP)
+	{
+		std::string query = (boost::format("SELECT"
+			" VehicleBrandType.name AS brand"
+			",ColorType.color_name AS color"
+			",MotorVehicle.DeviceID AS tollgate"
+			",Tollgate.Longitude AS longitude"
+			",Tollgate.Latitude AS latitude"
+			",MotorVehicle.plateNo"
+			",MotorVehicle.SubImageList AS image"
+			",MotorVehicle.AppearTime AS time"
+			" FROM MotorVehicle"
+			" STRAIGHT_JOIN Lane ON MotorVehicle.DeviceID = Lane.ApeID"
+			" STRAIGHT_JOIN Tollgate ON Tollgate.TollgateID = Lane.TollgateID"
+			" JOIN ColorType ON MotorVehicle.VehicleColor = ColorType.color_value"
+			" JOIN VehicleBrandType ON MotorVehicle.VehicleBrand = VehicleBrandType.value"
+			" WHERE MotorVehicle.MotorVehicleID BETWEEN \"%d\" AND \"%d\" AND MotorVehicle.plateNo IN (%s)"
+			" ORDER BY MotorVehicle.plateNo DESC") % step % (step + STEP) % (plates)).str();
+		query = GBKtoU8(query);
+		//std::cout << "查询语句1:     " << query.c_str() << std::endl;
+		if (mysql_query(mysql, query.c_str()))
+		{
+			std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+			EncapsulteMysqlError("Query error!!!", mysql_errno(mysql), mysql_error(mysql));
+
+			return -1;
+		}
+		query.clear();
+
+		MYSQL_RES *results = mysql_store_result(mysql);//取出查到的数据表（需要手动释放内存）
+		if (!results)
+		{
+			std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+			EncapsulteMysqlError("Datastructure MYSQL_RES error!!!", mysql_errno(mysql), mysql_error(mysql));
+
+			return -1;
+		}
+
+		unsigned int field_num = mysql_num_fields(results);//查到的数据表中的列数
+		my_ulonglong table_rows = mysql_num_rows(results);//查到的数据表中的行数
+
+		MYSQL_FIELD *fields = mysql_fetch_fields(results);//返回查到的数据表中的所有列信息，并保存为结构体形式
+		if (!fields)
+		{
+			std::cerr << mysql_errno(mysql) << ":" << mysql_error(mysql) << std::endl;
+			EncapsulteMysqlError("Datastructure MYSQL_FIELD error!!!", mysql_errno(mysql), mysql_error(mysql));
+
+			return -1;
+		}
+
+		std::map<std::string, unsigned int> fieldsnameMap;
+		for (unsigned int i = 0; i < field_num; i++)
+			fieldsnameMap[std::string(fields[i].name)] = i;
+
+		MYSQL_ROW row;
+		int rlen = 0;
+		while (row = mysql_fetch_row(results))//查到的数据表中的所有数据，并一行一行的顺序读取
+		{
+			TraceList tl = TraceList(row[fieldsnameMap["time"]]
+				, row[fieldsnameMap["tollgate"]]
+				, row[fieldsnameMap["longitude"]]
+				, row[fieldsnameMap["latitude"]]
+				, row[fieldsnameMap["image"]]);
+			datalist[row[fieldsnameMap["plateNo"]]] = DataList(row[fieldsnameMap["plateNo"]]
+															 , row[fieldsnameMap["color"]]
+															 , row[fieldsnameMap["brand"]]
+															 , tl);
+		}
+		mysql_free_result(results);
+	}
+	boost::property_tree::ptree tree, datatree, listtree, tracetree, templisttree;
+	tree.put("TaskCode", TaskCode);
+	for (auto &d : datalist)
+	{
+		for (auto &t : d.second.trace)
+		{
+			boost::property_tree::ptree temptracetree;
+			temptracetree.put("PassTime", t.appeartime);
+			temptracetree.put("TollgateName", t.tollgate);//or here
+			temptracetree.put("Longitude", t.longitude);//把JOIN替换成LEFT JOIN会有问题return (_CSTD strlen(_First));
+			temptracetree.put("Latitude", t.latitude);
+			temptracetree.put("Image", t.image);
+			tracetree.push_back(std::make_pair("", temptracetree));
+		}
+		templisttree.put("LicensePlate", d.first);
+		templisttree.put("VehicleColor", d.second.vehiclecolor);
+		templisttree.put("VehicleBrand", d.second.vehiclebrand);
+		templisttree.put_child("Trace", tracetree);
+		templisttree.put("TraceNumber", tracetree.size());
+	}
+	templisttree.put_child("Trace", tracetree);
+	templisttree.put("TraceNumber", tracetree.size());
+
+	listtree.push_back(std::make_pair("", templisttree));
+	datatree.put_child("list", listtree);
+	datatree.put("listNumber", listtree.size());
+	tree.put_child("data", datatree);
+
+	std::stringstream ssr;
+	boost::property_tree::write_json(ssr, tree);
+	json = ssr.str();
+	ok = true;
+
+	/*boost::thread *thread = new boost::thread[len];
+	bool *flags = new bool[len];
+	for (unsigned long step = 0,n = 0; n < len; step += STEP)
+	{
+		flags[n] = false;
+		thread[n] = boost::thread(&CarJudgedAlgorithm::CommitThread, this, plates, step,&flags[n]);
+	}
+	for (unsigned long n = 0; n < len; n++)
+		thread[n].detach();
+
+	int n = 0;
+	while (n < len)
+	{
+		for (int i = 0; i < len; i++)
+		{
+			if (flags[i])
+				n++;
+		}
+	}
+	delete[] thread;*/
+	
+	std::cout << "创建线程时间: " << t.elapsed() << std::endl;
+	
+
+	
+	return 0;
+}
+
 int CarJudgedAlgorithm::EncapsulateJson(MYSQL_RES * results)
 {
 	unsigned int field_num = mysql_num_fields(results);//查到的数据表中的列数
@@ -1611,17 +1865,20 @@ int CarJudgedAlgorithm::EncapsulateJson(MYSQL_RES * results)
 
 int CarJudgedAlgorithm::EncapsulateCorrelationAnalysistoJson(std::vector<std::string> plates)
 {
-	return EncapsulateFakePlatetoJson(plates);
+	//return EncapsulateFakePlatetoJson(plates);
+	return EncapsulateFakePlatetoJsonThread(plates);
 }
 
 int CarJudgedAlgorithm::EncapsulateTrajectoryCollisiontoJson(std::vector<std::string> plates)
 {
-	return EncapsulateFakePlatetoJson(plates);
+	//return EncapsulateFakePlatetoJson(plates);
+	return EncapsulateFakePlatetoJsonThread(plates);
 }
 
 int CarJudgedAlgorithm::EncapsulateFirstTimeEnterTowntoJson(std::vector<std::string> plates)
 {
-	return EncapsulateFakePlatetoJson(plates);
+	//return EncapsulateFakePlatetoJson(plates);
+	return EncapsulateFakePlatetoJsonThread(plates);
 }
 
 int CarJudgedAlgorithm::EncapsulteMysqlError(const char *error, unsigned int errorno, const char * errormsg)
